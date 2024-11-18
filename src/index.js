@@ -1,27 +1,52 @@
-const { Client, Collection, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+const { 
+    Client, 
+    Collection, 
+    GatewayIntentBits, 
+    Partials, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    PermissionFlagsBits, 
+    ChannelType, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle 
+} = require('discord.js');
+const { createTranscript } = require('discord-html-transcripts');
 const fs = require('fs');
+const fsPromises = fs.promises;
 const config = require('../config.json');
+const path = require('path');
 
+// Inicializar variables globales
+if (!global.ticketConfig) global.ticketConfig = {};
+if (!global.activeTickets) global.activeTickets = new Map();
+if (!global.serverConfig) global.serverConfig = new Map();
+if (!global.suggestions) global.suggestions = new Map();
+if (!global.antiraidConfig) global.antiraidConfig = new Map();
+if (!global.logsChannels) global.logsChannels = new Map();
+if (!global.prefixConfig) global.prefixConfig = new Map();
+
+// Inicializar cliente
 const client = new Client({
-  intents: [
-    GatewayIntentBits.AutoModerationConfiguration,
-    GatewayIntentBits.AutoModerationExecution,
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.DirectMessageReactions,
-    GatewayIntentBits.MessageContent,
-  ],
-  partials: [Partials.Channel, Partials.Message, Partials.Reaction],
+    intents: [
+        GatewayIntentBits.AutoModerationConfiguration,
+        GatewayIntentBits.AutoModerationExecution,
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageReactions
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
 
 // Colecciones para comandos y eventos
 client.commands = new Collection();
-client.events = new Collection();
 
 // Cargar comandos
 const commandFiles = fs.readdirSync('./src/slashCommands').filter(file => file.endsWith('.js'));
@@ -30,36 +55,75 @@ for (const file of commandFiles) {
     client.commands.set(command.data.name, command);
 }
 
-// Manejar interacciones de comandos
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isCommand()) return;
-
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-
+// Función para guardar configuraciones
+async function saveConfigurations() {
     try {
-        console.log(`[Command] ${interaction.user.tag} ejecutó /${interaction.commandName}`);
-        await command.execute(interaction, client);
+        const configPath = path.join(__dirname, './data/config.json');
+        const configDir = path.dirname(configPath);
+
+        await fsPromises.mkdir(configDir, { recursive: true });
+
+        const configToSave = {
+            ticketConfig: global.ticketConfig,
+            prefixConfig: Object.fromEntries(global.prefixConfig),
+            serverConfig: Object.fromEntries(global.serverConfig),
+            logsChannels: Object.fromEntries(global.logsChannels)
+        };
+
+        await fsPromises.writeFile(configPath, JSON.stringify(configToSave, null, 2));
+        console.log('Configuraciones guardadas exitosamente.');
+    } catch (error) {
+        console.error('Error al guardar configuraciones:', error);
+    }
+}
+
+// Cargar configuraciones al iniciar
+async function loadConfigurations() {
+    try {
+        const configPath = path.join(__dirname, './data/config.json');
+        if (fs.existsSync(configPath)) {
+            const data = await fsPromises.readFile(configPath, 'utf-8');
+            const savedConfig = JSON.parse(data);
+            
+            global.ticketConfig = savedConfig.ticketConfig || {};
+            global.prefixConfig = new Map(Object.entries(savedConfig.prefixConfig || {}));
+            global.serverConfig = new Map(Object.entries(savedConfig.serverConfig || {}));
+            global.logsChannels = new Map(Object.entries(savedConfig.logsChannels || {}));
+            
+            console.log('Configuraciones cargadas exitosamente.');
+        }
+    } catch (error) {
+        console.error('Error al cargar configuraciones:', error);
+    }
+}
+
+// Eventos del cliente
+client.on('ready', async () => {
+    console.log(`Bot está listo como ${client.user.tag}!`);
+    client.user.setActivity('Discord Bots', { type: 'WATCHING' });
+    await loadConfigurations();
+});
+
+// Manejar comandos e interacciones
+client.on('interactionCreate', async interaction => {
+    try {
+        if (interaction.isCommand()) {
+            const command = client.commands.get(interaction.commandName);
+            if (!command) return;
+            await command.execute(interaction);
+        }
     } catch (error) {
         console.error(error);
-        await interaction.reply({ 
-            content: '¡Hubo un error al ejecutar este comando!', 
-            ephemeral: true 
-        });
+        const errorMessage = '```diff\n- ❌ ¡Hubo un error al ejecutar este comando!\n```';
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: errorMessage, ephemeral: true });
+        } else {
+            await interaction.reply({ content: errorMessage, ephemeral: true });
+        }
     }
 });
 
-client.on('ready', () => {
-    console.log(`Bot está listo como ${client.user.tag}!`);
-    client.user.setActivity('Discord Bots', { type: 'WATCHING' });
-});
-
-client.login(config.token);
-
-// Añadir después de las declaraciones de intents
-const recentJoins = new Map();
-
-// Añadir este evento después del evento interactionCreate
+// Sistema Anti-raid
 client.on('guildMemberAdd', async member => {
     const config = global.antiraidConfig.get(member.guild.id);
     if (!config || !config.enabled) return;
@@ -69,71 +133,21 @@ client.on('guildMemberAdd', async member => {
     config.recentJoins.push(now);
 
     if (config.recentJoins.length >= config.joins) {
-        // Se detectó un raid
-        const embed = new EmbedBuilder()
-            .setTitle('🚨 ¡RAID DETECTADO!')
-            .setColor('#FF0000')
-            .setDescription(`Se ha detectado un posible raid (${config.recentJoins.length} uniones en ${config.seconds} segundos)`)
-            .setTimestamp();
-
-        // Ejecutar acción configurada
-        switch (config.action) {
-            case 'lock': {
-                // Bloquear todos los canales
-                const channels = await member.guild.channels.fetch();
-                channels.forEach(async channel => {
-                    if (channel.manageable) {
-                        await channel.permissionOverwrites.edit(member.guild.roles.everyone, {
-                            SendMessages: false,
-                            Connect: false
-                        });
-                    }
-                });
-                embed.addFields({ name: '🔒 Acción tomada', value: 'Servidor bloqueado temporalmente' });
-                break;
-            }
-            case 'kick': {
-                // Kickear usuarios recientes
-                const recentMembers = await member.guild.members.fetch({
-                    time: config.seconds * 1000
-                });
-                recentMembers.forEach(async m => {
-                    if (m.kickable && m.joinedTimestamp > now - (config.seconds * 1000)) {
-                        await m.kick('Anti-raid: Posible raid detectado');
-                    }
-                });
-                embed.addFields({ name: '🚫 Acción tomada', value: 'Usuarios recientes expulsados' });
-                break;
-            }
-            case 'ban': {
-                // Banear usuarios recientes
-                const recentMembers = await member.guild.members.fetch({
-                    time: config.seconds * 1000
-                });
-                recentMembers.forEach(async m => {
-                    if (m.bannable && m.joinedTimestamp > now - (config.seconds * 1000)) {
-                        await m.ban({ reason: 'Anti-raid: Posible raid detectado' });
-                    }
-                });
-                embed.addFields({ name: '🔨 Acción tomada', value: 'Usuarios recientes baneados' });
-                break;
-            }
-        }
-
-        // Enviar notificación al canal de logs
-        try {
-            const canalLogsId = global.logsChannels.get(member.guild.id);
-            if (canalLogsId) {
-                const canalLogs = await member.guild.channels.fetch(canalLogsId);
-                if (canalLogs) {
-                    await canalLogs.send({ embeds: [embed] });
-                }
-            }
-        } catch (error) {
-            console.log('No se pudo enviar al canal de logs');
-        }
-
-        // Limpiar la lista de uniones recientes
-        config.recentJoins = [];
+        // Implementar lógica anti-raid aquí
+        console.log(`Raid detectado en ${member.guild.name}`);
     }
 });
+
+// Manejo de cierre del proceso
+process.on('SIGINT', async () => {
+    await saveConfigurations();
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    await saveConfigurations();
+    process.exit(0);
+});
+
+// Iniciar el bot
+client.login(config.token);

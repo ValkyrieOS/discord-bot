@@ -31,12 +31,9 @@ module.exports = {
                         realMembers: realMembers,
                         bots: bots,
                         id: guild.id,
-                        icon: guild.iconURL({ dynamic: true }),
                         owner: (await guild.fetchOwner()).user.tag,
-                        createdAt: guild.createdAt,
                         boostLevel: guild.premiumTier,
                         boostCount: guild.premiumSubscriptionCount,
-                        verificationLevel: guild.verificationLevel,
                         channels: guild.channels.cache.size,
                         roles: guild.roles.cache.size
                     };
@@ -59,7 +56,7 @@ module.exports = {
                     name: `🏆 Top Servidores de ${bot.user.username}`, 
                     iconURL: bot.user.displayAvatarURL() 
                 })
-                .setDescription('*Ranking ordenado por cantidad de miembros (sin contar bots)*')
+                .setDescription(`*Mostrando los ${Math.min(15, serverList.length)} servidores más grandes de un total de ${serverList.length} servidores*`)
                 .setThumbnail(bot.user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp();
 
@@ -73,8 +70,8 @@ module.exports = {
                 description += `┃ \`👥\` Miembros: **${server.realMembers}** usuarios`;
                 description += ` + \`🤖\` **${server.bots}** bots\n`;
                 description += `┃ \`👑\` Owner: **${server.owner}**\n`;
-                description += `┃ \`🚀\` Nivel de Boost: **${server.boostLevel}** (${server.boostCount} boosts)\n`;
-                description += `┃ \`🛡️\` Verificación: **${server.verificationLevel}**\n`;
+                description += `┃ \`🚀\` Boost: Nivel **${server.boostLevel}** (${server.boostCount} boosts)\n`;
+                description += `┃ \`💬\` Canales: **${server.channels}** | \`🎭\` Roles: **${server.roles}**\n`;
                 description += `┃ \`🆔\` \`${server.id}\`\n`;
                 if (index !== topServers.length - 1) description += '\n';
             });
@@ -99,23 +96,20 @@ module.exports = {
 
             // Collector para el botón
             const collector = response.createMessageComponentCollector({ 
-                time: 60000 
+                time: 60000 // 1 minuto
             });
 
             collector.on('collect', async i => {
-                if (i.customId === 'export_json') {
-                    // Crear archivo JSON con la información
+                if (i.customId === 'export_json' && i.user.id === interaction.user.id) {
                     const jsonData = serverList.map(server => ({
                         nombre: server.name,
                         id: server.id,
                         miembros: server.realMembers,
                         bots: server.bots,
                         total: server.totalMembers,
-                        propietario: server.owner,
-                        creado: server.createdAt
+                        propietario: server.owner
                     }));
 
-                    // Convertir a string y crear el buffer
                     const jsonString = JSON.stringify(jsonData, null, 2);
                     const buffer = Buffer.from(jsonString, 'utf-8');
 
@@ -129,12 +123,27 @@ module.exports = {
                 }
             });
 
+            collector.on('end', async () => {
+                try {
+                    const disabledRow = new ActionRowBuilder()
+                        .addComponents(exportButton.setDisabled(true));
+                    
+                    await interaction.editReply({
+                        components: [disabledRow]
+                    });
+                } catch (error) {
+                    console.error('Error al desactivar botones:', error);
+                }
+            });
+
         } catch (error) {
             console.error('Error en comando servers:', error);
-            await interaction.reply({
-                content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
-                ephemeral: true
-            });
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
+                    ephemeral: true
+                });
+            }
         }
     }
 }; 
