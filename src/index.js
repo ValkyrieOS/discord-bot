@@ -40,7 +40,8 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.DirectMessageReactions
+        GatewayIntentBits.DirectMessageReactions,
+        GatewayIntentBits.GuildInvites
     ],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
@@ -67,7 +68,8 @@ async function saveConfigurations() {
             ticketConfig: global.ticketConfig,
             prefixConfig: Object.fromEntries(global.prefixConfig),
             serverConfig: Object.fromEntries(global.serverConfig),
-            logsChannels: Object.fromEntries(global.logsChannels)
+            logsChannels: Object.fromEntries(global.logsChannels),
+            autoRoleConfig: Object.fromEntries(global.autoRoleConfig || new Map())
         };
 
         await fsPromises.writeFile(configPath, JSON.stringify(configToSave, null, 2));
@@ -89,6 +91,7 @@ async function loadConfigurations() {
             global.prefixConfig = new Map(Object.entries(savedConfig.prefixConfig || {}));
             global.serverConfig = new Map(Object.entries(savedConfig.serverConfig || {}));
             global.logsChannels = new Map(Object.entries(savedConfig.logsChannels || {}));
+            global.autoRoleConfig = new Map(Object.entries(savedConfig.autoRoleConfig || {}));
             
             console.log('Configuraciones cargadas exitosamente.');
         }
@@ -109,6 +112,10 @@ client.on('interactionCreate', async interaction => {
     try {
         if (interaction.isCommand()) {
             const command = client.commands.get(interaction.commandName);
+            if (!command) return;
+            await command.execute(interaction);
+        } else if (interaction.isStringSelectMenu() && interaction.customId === 'help_menu') {
+            const command = client.commands.get('help');
             if (!command) return;
             await command.execute(interaction);
         }
@@ -135,6 +142,23 @@ client.on('guildMemberAdd', async member => {
     if (config.recentJoins.length >= config.joins) {
         // Implementar lógica anti-raid aquí
         console.log(`Raid detectado en ${member.guild.name}`);
+    }
+});
+
+// Añadir el evento guildMemberAdd para el autorole
+client.on('guildMemberAdd', async member => {
+    try {
+        // Verificar configuración de autorole
+        const roleId = global.autoRoleConfig?.get(member.guild.id);
+        if (!roleId || member.user.bot) return;
+
+        const role = await member.guild.roles.fetch(roleId);
+        if (!role) return;
+
+        // Asignar el rol
+        await member.roles.add(role);
+    } catch (error) {
+        console.error('Error al aplicar autorole:', error);
     }
 });
 

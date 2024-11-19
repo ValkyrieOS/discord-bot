@@ -38,8 +38,10 @@ module.exports = {
                         },
                         logs: {
                             channel: global.logsChannels?.get(interaction.guildId)
+                        },
+                        autorole: {
+                            roleId: global.autoRoleConfig?.get(interaction.guildId)
                         }
-                        // Puedes añadir más configuraciones aquí
                     };
 
                     // Convertir a JSON con formato legible
@@ -59,7 +61,8 @@ module.exports = {
                         .addFields(
                             { name: '🏷️ Prefijos', value: Object.keys(guildConfig.prefix.roles).length > 0 ? '✅ Incluido' : '❌ No configurado', inline: true },
                             { name: '💭 Sugerencias', value: guildConfig.suggestions.channel ? '✅ Incluido' : '❌ No configurado', inline: true },
-                            { name: '📝 Logs', value: guildConfig.logs.channel ? '✅ Incluido' : '❌ No configurado', inline: true }
+                            { name: '📝 Logs', value: guildConfig.logs.channel ? '✅ Incluido' : '❌ No configurado', inline: true },
+                            { name: '🎭 AutoRole', value: guildConfig.autorole.roleId ? '✅ Incluido' : '❌ No configurado', inline: true }
                         )
                         .setTimestamp();
 
@@ -120,6 +123,13 @@ module.exports = {
                             if (!global.logsChannels) global.logsChannels = new Map();
                             global.logsChannels.set(interaction.guildId, configData.logs.channel);
                             applied.push('📝 Logs');
+                        }
+
+                        // Importar configuración de autorole
+                        if (configData.autorole?.roleId) {
+                            if (!global.autoRoleConfig) global.autoRoleConfig = new Map();
+                            global.autoRoleConfig.set(interaction.guildId, configData.autorole.roleId);
+                            applied.push('🎭 AutoRole');
                         }
 
                         const embed = new EmbedBuilder()

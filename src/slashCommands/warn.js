@@ -1,110 +1,159 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+
+// Sistema de advertencias global
+if (!global.warnings) {
+    global.warnings = new Map();
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('warn')
-        .setDescription('⚠️ Advierte a un usuario')
-        .addUserOption(option => 
-            option.setName('usuario')
-                .setDescription('El usuario a advertir')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('razon')
-                .setDescription('Razón de la advertencia')
-                .setRequired(true))
+        .setDescription('🛡️ Sistema de advertencias')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('add')
+                .setDescription('Añade una advertencia a un usuario')
+                .addUserOption(option =>
+                    option.setName('usuario')
+                        .setDescription('Usuario a advertir')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('razón')
+                        .setDescription('Razón de la advertencia')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('remove')
+                .setDescription('Elimina una advertencia de un usuario')
+                .addUserOption(option =>
+                    option.setName('usuario')
+                        .setDescription('Usuario')
+                        .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('id')
+                        .setDescription('ID de la advertencia')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list')
+                .setDescription('Muestra las advertencias de un usuario')
+                .addUserOption(option =>
+                    option.setName('usuario')
+                        .setDescription('Usuario')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear')
+                .setDescription('Elimina todas las advertencias de un usuario')
+                .addUserOption(option =>
+                    option.setName('usuario')
+                        .setDescription('Usuario')
+                        .setRequired(true)))
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
     async execute(interaction) {
+        const subcommand = interaction.options.getSubcommand();
+        const user = interaction.options.getUser('usuario');
+        const guildWarnings = global.warnings.get(interaction.guildId) || new Map();
+
         try {
-            if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ No tienes permisos para usar este comando.\n```',
-                    ephemeral: true
-                });
-            }
+            switch (subcommand) {
+                case 'add': {
+                    const reason = interaction.options.getString('razón');
+                    const userWarnings = guildWarnings.get(user.id) || [];
+                    
+                    const warning = {
+                        id: userWarnings.length + 1,
+                        reason,
+                        moderator: interaction.user.id,
+                        timestamp: Date.now()
+                    };
 
-            const usuario = interaction.options.getUser('usuario');
-            const razon = interaction.options.getString('razon');
-            const moderador = interaction.user;
-            const servidor = interaction.guild.name;
+                    userWarnings.push(warning);
+                    guildWarnings.set(user.id, userWarnings);
+                    global.warnings.set(interaction.guildId, guildWarnings);
 
-            const miembro = await interaction.guild.members.fetch(usuario.id).catch(() => null);
-            if (!miembro) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ No se encontró al usuario en el servidor.\n```',
-                    ephemeral: true
-                });
-            }
+                    const embed = new EmbedBuilder()
+                        .setColor('#ff9900')
+                        .setTitle('⚠️ Nueva Advertencia')
+                        .addFields(
+                            { name: '👤 Usuario', value: user.tag, inline: true },
+                            { name: '🆔 Warn ID', value: `#${warning.id}`, inline: true },
+                            { name: '👮 Moderador', value: interaction.user.tag, inline: true },
+                            { name: '📝 Razón', value: reason }
+                        )
+                        .setFooter({ text: `Total de advertencias: ${userWarnings.length}` })
+                        .setTimestamp();
 
-            if (usuario.id === moderador.id) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ No puedes advertirte a ti mismo.\n```',
-                    ephemeral: true
-                });
-            }
-
-            if (miembro.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ No puedes advertir a un miembro del staff.\n```',
-                    ephemeral: true
-                });
-            }
-
-            const warnEmbed = new EmbedBuilder()
-                .setTitle('⚠️ Advertencia')
-                .setColor('#FF0000')
-                .setDescription(`${usuario} ha sido advertido\n\n**Razón:**\n\`\`\`${razon}\`\`\``)
-                .addFields(
-                    { name: 'Moderador', value: `${moderador}`, inline: true },
-                    { name: 'Fecha', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true }
-                )
-                .setTimestamp();
-
-            // Enviar al canal de logs
-            try {
-                const canalLogsId = global.logsChannels.get(interaction.guild.id);
-                if (canalLogsId) {
-                    const canalLogs = await interaction.guild.channels.fetch(canalLogsId);
-                    if (canalLogs) {
-                        await canalLogs.send({ embeds: [warnEmbed] });
-                    }
+                    await interaction.reply({ embeds: [embed] });
+                    break;
                 }
-            } catch (error) {
-                console.log('No se pudo enviar al canal de logs');
+
+                case 'remove': {
+                    const warnId = interaction.options.getInteger('id');
+                    const userWarnings = guildWarnings.get(user.id) || [];
+                    
+                    const index = userWarnings.findIndex(w => w.id === warnId);
+                    if (index === -1) {
+                        return await interaction.reply({
+                            content: '```diff\n- ❌ No se encontró la advertencia especificada.\n```',
+                            ephemeral: true
+                        });
+                    }
+
+                    userWarnings.splice(index, 1);
+                    guildWarnings.set(user.id, userWarnings);
+                    global.warnings.set(interaction.guildId, guildWarnings);
+
+                    await interaction.reply({
+                        content: `\`\`\`diff\n+ ✅ Se eliminó la advertencia #${warnId} de ${user.tag}.\n\`\`\``,
+                        ephemeral: true
+                    });
+                    break;
+                }
+
+                case 'list': {
+                    const userWarnings = guildWarnings.get(user.id) || [];
+                    
+                    if (userWarnings.length === 0) {
+                        return await interaction.reply({
+                            content: `\`\`\`diff\n+ ℹ️ ${user.tag} no tiene advertencias.\n\`\`\``,
+                            ephemeral: true
+                        });
+                    }
+
+                    const embed = new EmbedBuilder()
+                        .setColor('#0099ff')
+                        .setTitle(`📋 Advertencias de ${user.tag}`)
+                        .setDescription(userWarnings.map(w => 
+                            `**#${w.id}** | <t:${Math.floor(w.timestamp / 1000)}:R>\n` +
+                            `👮 Por: <@${w.moderator}>\n` +
+                            `📝 Razón: ${w.reason}\n`
+                        ).join('\n'))
+                        .setFooter({ text: `Total: ${userWarnings.length} advertencias` })
+                        .setTimestamp();
+
+                    await interaction.reply({ embeds: [embed] });
+                    break;
+                }
+
+                case 'clear': {
+                    guildWarnings.delete(user.id);
+                    global.warnings.set(interaction.guildId, guildWarnings);
+
+                    await interaction.reply({
+                        content: `\`\`\`diff\n+ ✅ Se eliminaron todas las advertencias de ${user.tag}.\n\`\`\``,
+                        ephemeral: true
+                    });
+                    break;
+                }
             }
-
-            // Enviar DM al usuario
-            try {
-                const dmEmbed = new EmbedBuilder()
-                    .setTitle('⚠️ Has sido advertido')
-                    .setColor('#FF0000')
-                    .setDescription(`Has recibido una advertencia en **${servidor}**\n\n**Razón:**\n\`\`\`${razon}\`\`\``)
-                    .addFields(
-                        { name: 'Moderador', value: `${moderador}`, inline: true },
-                        { name: 'Fecha', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true }
-                    )
-                    .setTimestamp();
-
-                await usuario.send({ embeds: [dmEmbed] });
-            } catch (error) {
-                console.log('No se pudo enviar DM al usuario');
-            }
-
-            // Enviar confirmación al canal
-            await interaction.reply({ 
-                content: `✅ Has advertido a ${usuario}`,
-                embeds: [warnEmbed] 
-            });
 
         } catch (error) {
-            console.error('Error en comando warn:', error);
-            if (!interaction.replied) {
-                await interaction.reply({
-                    content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
-                    ephemeral: true
-                });
-            }
+            console.error(error);
+            await interaction.reply({
+                content: '```diff\n- ❌ Hubo un error al procesar el comando.\n```',
+                ephemeral: true
+            });
         }
-    },
+    }
 }; 

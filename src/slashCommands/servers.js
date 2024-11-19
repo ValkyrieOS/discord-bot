@@ -7,7 +7,7 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
         try {
-            // Verificar si el usuario es el dueño del bot
+            // Verificar si es el dueño del bot
             const application = await interaction.client.application.fetch();
             if (interaction.user.id !== application.owner.id) {
                 return await interaction.reply({
@@ -16,133 +16,123 @@ module.exports = {
                 });
             }
 
+            await interaction.deferReply({ ephemeral: true });
             const bot = interaction.client;
             
-            // Obtener información detallada de cada servidor
+            // Obtener información de servidores
             const serverList = await Promise.all(
                 Array.from(bot.guilds.cache.values()).map(async guild => {
-                    const members = await guild.members.fetch();
-                    const realMembers = members.filter(member => !member.user.bot).size;
-                    const bots = members.filter(member => member.user.bot).size;
-                    
-                    return {
-                        name: guild.name,
-                        totalMembers: guild.memberCount,
-                        realMembers: realMembers,
-                        bots: bots,
-                        id: guild.id,
-                        owner: (await guild.fetchOwner()).user.tag,
-                        boostLevel: guild.premiumTier,
-                        boostCount: guild.premiumSubscriptionCount,
-                        channels: guild.channels.cache.size,
-                        roles: guild.roles.cache.size
-                    };
+                    try {
+                        const members = await guild.members.fetch();
+                        let inviteUrl = 'No disponible';
+                        
+                        try {
+                            const invites = await guild.invites.fetch();
+                            const invite = invites.first();
+                            if (invite) inviteUrl = invite.url;
+                        } catch {
+                            // Si no se puede obtener la invitación, se mantiene como "No disponible"
+                        }
+
+                        return {
+                            name: guild.name,
+                            id: guild.id,
+                            members: members.filter(member => !member.user.bot).size,
+                            bots: members.filter(member => member.user.bot).size,
+                            owner: (await guild.fetchOwner()).user.tag,
+                            boost: guild.premiumSubscriptionCount,
+                            invite: inviteUrl
+                        };
+                    } catch (error) {
+                        console.error(`Error al obtener datos de ${guild.name}:`, error);
+                        return null;
+                    }
                 })
             );
 
-            // Ordenar por cantidad de miembros reales
-            serverList.sort((a, b) => b.realMembers - a.realMembers);
+            const validServers = serverList.filter(server => server !== null)
+                .sort((a, b) => b.members - a.members);
 
-            if (serverList.length === 0) {
-                return await interaction.reply({
-                    content: '```diff\n- No estoy en ningún servidor actualmente.\n```',
-                    ephemeral: true
-                });
+            if (validServers.length === 0) {
+                return await interaction.editReply('```diff\n- No estoy en ningún servidor actualmente.\n```');
             }
 
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setAuthor({ 
-                    name: `🏆 Top Servidores de ${bot.user.username}`, 
+                    name: `📊 Servidores de ${bot.user.username}`, 
                     iconURL: bot.user.displayAvatarURL() 
                 })
-                .setDescription(`*Mostrando los ${Math.min(15, serverList.length)} servidores más grandes de un total de ${serverList.length} servidores*`)
-                .setThumbnail(bot.user.displayAvatarURL({ dynamic: true }))
+                .setFooter({ 
+                    text: `Total: ${validServers.length} servidores | ${validServers.reduce((acc, server) => acc + server.members, 0)} usuarios` 
+                })
                 .setTimestamp();
 
-            // Mostrar top 15 servidores
-            const topServers = serverList.slice(0, 15);
+            // Mostrar top 10 servidores
+            const topServers = validServers.slice(0, 10);
             let description = '';
             
             topServers.forEach((server, index) => {
-                const medal = index < 3 ? ['🥇', '🥈', '🥉'][index] : `\`${index + 1}.\``;
+                const medal = index < 3 ? ['🥇', '🥈', '🥉'][index] : `${index + 1}.`;
                 description += `${medal} **${server.name}**\n`;
-                description += `┃ \`👥\` Miembros: **${server.realMembers}** usuarios`;
-                description += ` + \`🤖\` **${server.bots}** bots\n`;
-                description += `┃ \`👑\` Owner: **${server.owner}**\n`;
-                description += `┃ \`🚀\` Boost: Nivel **${server.boostLevel}** (${server.boostCount} boosts)\n`;
-                description += `┃ \`💬\` Canales: **${server.channels}** | \`🎭\` Roles: **${server.roles}**\n`;
-                description += `┃ \`🆔\` \`${server.id}\`\n`;
+                description += `> 👥 **${server.members}** usuarios • 🤖 ${server.bots} bots\n`;
+                description += `> 👑 ${server.owner} • 🌟 ${server.boost} boosts\n`;
+                description += `> 🔗 ${server.invite !== 'No disponible' ? `[Unirse](${server.invite})` : '`No disponible`'}\n`;
                 if (index !== topServers.length - 1) description += '\n';
             });
 
             embed.setDescription(description);
 
-            // Crear botón para exportar JSON
+            // Botón para exportar datos
             const exportButton = new ButtonBuilder()
                 .setCustomId('export_json')
-                .setLabel('Exportar datos')
-                .setEmoji('📊')
+                .setLabel('Exportar Lista')
+                .setEmoji('📋')
                 .setStyle(ButtonStyle.Secondary);
 
-            const row = new ActionRowBuilder()
-                .addComponents(exportButton);
+            const row = new ActionRowBuilder().addComponents(exportButton);
 
-            const response = await interaction.reply({
+            const response = await interaction.editReply({
                 embeds: [embed],
-                components: [row],
-                ephemeral: true
+                components: [row]
             });
 
             // Collector para el botón
-            const collector = response.createMessageComponentCollector({ 
-                time: 60000 // 1 minuto
-            });
+            const collector = response.createMessageComponentCollector({ time: 60000 });
 
             collector.on('collect', async i => {
                 if (i.customId === 'export_json' && i.user.id === interaction.user.id) {
-                    const jsonData = serverList.map(server => ({
-                        nombre: server.name,
-                        id: server.id,
-                        miembros: server.realMembers,
-                        bots: server.bots,
-                        total: server.totalMembers,
-                        propietario: server.owner
-                    }));
-
-                    const jsonString = JSON.stringify(jsonData, null, 2);
-                    const buffer = Buffer.from(jsonString, 'utf-8');
-
-                    await i.reply({
-                        files: [{
-                            attachment: buffer,
-                            name: 'servers_data.json'
-                        }],
-                        ephemeral: true
-                    });
+                    try {
+                        const jsonString = JSON.stringify(validServers, null, 2);
+                        await i.reply({
+                            files: [{
+                                attachment: Buffer.from(jsonString),
+                                name: 'servers_list.json'
+                            }],
+                            ephemeral: true
+                        });
+                    } catch (error) {
+                        await i.reply({
+                            content: '```diff\n- ❌ Error al exportar los datos.\n```',
+                            ephemeral: true
+                        });
+                    }
                 }
             });
 
-            collector.on('end', async () => {
-                try {
-                    const disabledRow = new ActionRowBuilder()
-                        .addComponents(exportButton.setDisabled(true));
-                    
-                    await interaction.editReply({
-                        components: [disabledRow]
-                    });
-                } catch (error) {
-                    console.error('Error al desactivar botones:', error);
-                }
+            collector.on('end', () => {
+                const disabledRow = new ActionRowBuilder()
+                    .addComponents(exportButton.setDisabled(true));
+                interaction.editReply({ components: [disabledRow] }).catch(() => {});
             });
 
         } catch (error) {
             console.error('Error en comando servers:', error);
+            const content = '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```';
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
-                    ephemeral: true
-                });
+                await interaction.reply({ content, ephemeral: true });
+            } else {
+                await interaction.editReply({ content });
             }
         }
     }

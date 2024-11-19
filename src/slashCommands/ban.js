@@ -3,17 +3,17 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('disc
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('ban')
-        .setDescription('🔨 Banea a un usuario del servidor')
-        .addUserOption(option => 
+        .setDescription('🛡️ Banea a un usuario del servidor')
+        .addUserOption(option =>
             option.setName('usuario')
-                .setDescription('El usuario a banear')
+                .setDescription('Usuario a banear')
                 .setRequired(true))
         .addStringOption(option =>
-            option.setName('razon')
+            option.setName('razón')
                 .setDescription('Razón del baneo')
-                .setRequired(true))
+                .setRequired(false))
         .addNumberOption(option =>
-            option.setName('dias')
+            option.setName('días')
                 .setDescription('Días de mensajes a eliminar')
                 .setMinValue(0)
                 .setMaxValue(7)
@@ -21,9 +21,9 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
     async execute(interaction) {
         const user = interaction.options.getUser('usuario');
-        const reason = interaction.options.getString('razon');
-        const days = interaction.options.getNumber('dias') || 0;
-        
+        const reason = interaction.options.getString('razón') || 'No especificada';
+        const days = interaction.options.getNumber('días') || 0;
+
         try {
             const member = await interaction.guild.members.fetch(user.id);
             
@@ -35,63 +35,27 @@ module.exports = {
                 });
             }
 
-            // Verificar si el bot puede banear al usuario
-            if (!member.bannable) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ No tengo permisos para banear a este usuario.\n```',
-                    ephemeral: true
-                });
-            }
+            await member.ban({ deleteMessageDays: days, reason: `${reason} | Por: ${interaction.user.tag}` });
 
-            // Crear embed para el log
-            const banEmbed = new EmbedBuilder()
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
                 .setTitle('🔨 Usuario Baneado')
-                .setColor('#FF0000')
-                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .addFields(
-                    { name: 'Usuario', value: `${user.tag} (${user.id})`, inline: true },
-                    { name: 'Moderador', value: `${interaction.user.tag}`, inline: true },
-                    { name: 'Razón', value: reason },
-                    { name: 'Mensajes eliminados', value: `${days} días`, inline: true }
+                    { name: '👤 Usuario', value: `${user.tag}`, inline: true },
+                    { name: '🆔 ID', value: user.id, inline: true },
+                    { name: '👮 Moderador', value: interaction.user.tag, inline: true },
+                    { name: '📝 Razón', value: reason },
+                    { name: '🗑️ Mensajes eliminados', value: `${days} días` }
                 )
+                .setThumbnail(user.displayAvatarURL())
                 .setTimestamp();
 
-            // Intentar enviar DM al usuario
-            try {
-                const dmEmbed = new EmbedBuilder()
-                    .setTitle('🔨 Has sido baneado')
-                    .setColor('#FF0000')
-                    .setDescription(`Has sido baneado de **${interaction.guild.name}**\n\n**Razón:**\n\`\`\`${reason}\`\`\``)
-                    .setTimestamp();
-
-                await user.send({ embeds: [dmEmbed] });
-            } catch (error) {
-                console.log('No se pudo enviar DM al usuario');
-            }
-
-            // Banear al usuario
-            await member.ban({ deleteMessageDays: days, reason: reason });
-
-            // Enviar confirmación
-            await interaction.reply({ embeds: [banEmbed] });
-
-            // Enviar al canal de logs si existe
-            try {
-                const canalLogsId = global.logsChannels.get(interaction.guild.id);
-                if (canalLogsId) {
-                    const canalLogs = await interaction.guild.channels.fetch(canalLogsId);
-                    if (canalLogs) {
-                        await canalLogs.send({ embeds: [banEmbed] });
-                    }
-                }
-            } catch (error) {
-                console.log('No se pudo enviar al canal de logs');
-            }
+            await interaction.reply({ embeds: [embed] });
 
         } catch (error) {
-            console.error('Error al banear:', error);
+            console.error(error);
             await interaction.reply({
-                content: '```diff\n- ❌ Hubo un error al intentar banear al usuario.\n```',
+                content: '```diff\n- ❌ No se pudo banear al usuario.\n```',
                 ephemeral: true
             });
         }

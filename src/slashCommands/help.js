@@ -6,6 +6,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('help')
         .setDescription('📚 Muestra la lista de comandos disponibles'),
+
     async execute(interaction) {
         try {
             // Obtener todos los comandos
@@ -25,30 +26,39 @@ module.exports = {
                 const desc = command.data.description;
                 const name = command.data.name;
 
-                if (desc.includes('🛡️') || ['ban', 'kick', 'mute', 'warn', 'antiraid'].includes(name)) {
+                if (desc.includes('🛡️') || ['ban', 'kick', 'timeout', 'warn', 'antiraid', 'clear', 'lock', 'nuke', 'unban', 'role'].includes(name)) {
                     commands.moderacion.push({ name, desc });
                 } else if (desc.includes('💫') || ['hug', 'kiss', 'pat', 'slap', 'poke', 'cuddle', 'feed'].includes(name)) {
                     commands.social.push({ name, desc });
                 } else if (desc.includes('🔞')) {
                     commands.nsfw.push({ name, desc });
-                } else if (desc.includes('📊') || desc.includes('🕒') || ['user', 'server', 'stats', 'roles', 'botinfo', 'time'].includes(name)) {
+                } else if (desc.includes('📊') || desc.includes('🕒') || ['user', 'server', 'stats', 'botinfo', 'time', 'servers', 'ping', 'avatar'].includes(name)) {
                     commands.info.push({ name, desc });
-                } else if (desc.includes('🎫') || desc.includes('🔢') || desc.includes('⏰') || ['ticket', 'suggest', 'calc', 'remind', 'poll'].includes(name)) {
+                } else if (desc.includes('🎫') || desc.includes('🔢') || desc.includes('⏰') || ['ticket', 'suggest', 'calc', 'remind', 'poll', 'autorole', 'config', 'cleartickets'].includes(name)) {
                     commands.utilidad.push({ name, desc });
-                } else if (desc.includes('🎱') || desc.includes('🎲') || desc.includes('🪙') || ['8ball', 'choice', 'coinflip'].includes(name)) {
+                } else if (desc.includes('🎱') || desc.includes('🎲') || desc.includes('🪙') || ['8ball', 'choice', 'coinflip', 'giveaway'].includes(name)) {
                     commands.diversion.push({ name, desc });
                 } else {
                     commands.diversion.push({ name, desc });
                 }
             }
 
+            // Si es una interacción del menú
             if (interaction.isStringSelectMenu()) {
                 const category = interaction.values[0];
                 const categoryCommands = commands[category];
+                const categoryNames = {
+                    moderacion: 'Moderación',
+                    social: 'Social',
+                    nsfw: 'NSFW',
+                    info: 'Información',
+                    utilidad: 'Utilidad',
+                    diversion: 'Diversión'
+                };
 
                 const categoryEmbed = new EmbedBuilder()
                     .setColor('#0099ff')
-                    .setTitle(`📚 Comandos de ${category.charAt(0).toUpperCase() + category.slice(1)}`)
+                    .setTitle(`📚 Comandos de ${categoryNames[category]}`)
                     .setDescription(categoryCommands.map(cmd => `> \`/${cmd.name}\` - ${cmd.desc}`).join('\n'))
                     .setFooter({ 
                         text: interaction.user.tag,
