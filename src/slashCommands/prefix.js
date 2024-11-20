@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { loadConfig, saveConfig } = require('../utils/configManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -35,30 +36,36 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageNicknames),
     async execute(interaction) {
         try {
+            await interaction.deferReply();
             const subcommand = interaction.options.getSubcommand();
 
-            // Inicializar el Map global si no existe
-            if (!global.prefixConfig) {
-                global.prefixConfig = new Map();
-            }
+            // Cargar configuración desde el archivo
+            const config = await loadConfig();
 
             switch (subcommand) {
                 case 'setup': {
                     const role = interaction.options.getRole('rol');
                     const prefix = interaction.options.getString('prefijo');
 
-                    // Verificar permisos del bot
                     if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageNicknames)) {
-                        return await interaction.reply({
+                        return await interaction.editReply({
                             content: '❌ No tengo permisos para cambiar apodos en este servidor.',
                             ephemeral: true
                         });
                     }
 
-                    // Guardar la configuración
-                    const guildConfig = global.prefixConfig.get(interaction.guildId) || {};
-                    guildConfig[role.id] = prefix;
-                    global.prefixConfig.set(interaction.guildId, guildConfig);
+                    // Guardar en la variable global
+                    if (!global.prefixConfig.has(interaction.guildId)) {
+                        global.prefixConfig.set(interaction.guildId, {});
+                    }
+                    const guildPrefixes = global.prefixConfig.get(interaction.guildId);
+                    guildPrefixes[role.id] = prefix;
+                    global.prefixConfig.set(interaction.guildId, guildPrefixes);
+
+                    // Guardar en el archivo de configuración
+                    if (!config.prefix) config.prefix = {};
+                    config.prefix[interaction.guildId] = guildPrefixes;
+                    await saveConfig(config);
 
                     // Aplicar el prefijo a todos los miembros con ese rol
                     const members = interaction.guild.members.cache.filter(member => member.roles.cache.has(role.id));
@@ -86,24 +93,37 @@ module.exports = {
                         )
                         .setTimestamp();
 
-                    await interaction.reply({ embeds: [embed] });
+                    await interaction.editReply({ embeds: [embed] });
                     break;
                 }
 
                 case 'remove': {
                     const role = interaction.options.getRole('rol');
-                    const guildConfig = global.prefixConfig.get(interaction.guildId);
+                    const guildPrefixes = global.prefixConfig.get(interaction.guildId);
 
-                    if (!guildConfig || !guildConfig[role.id]) {
-                        return await interaction.reply({
+                    if (!guildPrefixes || !guildPrefixes[role.id]) {
+                        return await interaction.editReply({
                             content: '❌ No hay ningún prefijo configurado para ese rol.',
                             ephemeral: true
                         });
                     }
 
-                    // Eliminar el prefijo
-                    delete guildConfig[role.id];
-                    global.prefixConfig.set(interaction.guildId, guildConfig);
+                    // Eliminar de la variable global
+                    delete guildPrefixes[role.id];
+                    if (Object.keys(guildPrefixes).length === 0) {
+                        global.prefixConfig.delete(interaction.guildId);
+                    } else {
+                        global.prefixConfig.set(interaction.guildId, guildPrefixes);
+                    }
+
+                    // Actualizar archivo de configuración
+                    if (!config.prefix) config.prefix = {};
+                    if (Object.keys(guildPrefixes).length === 0) {
+                        delete config.prefix[interaction.guildId];
+                    } else {
+                        config.prefix[interaction.guildId] = guildPrefixes;
+                    }
+                    await saveConfig(config);
 
                     // Restaurar nombres originales
                     const members = interaction.guild.members.cache.filter(member => member.roles.cache.has(role.id));
@@ -129,14 +149,14 @@ module.exports = {
                         )
                         .setTimestamp();
 
-                    await interaction.reply({ embeds: [embed] });
+                    await interaction.editReply({ embeds: [embed] });
                     break;
                 }
 
                 case 'check': {
-                    const guildConfig = global.prefixConfig.get(interaction.guildId);
-                    if (!guildConfig) {
-                        return await interaction.reply({
+                    const guildPrefixes = global.prefixConfig.get(interaction.guildId);
+                    if (!guildPrefixes) {
+                        return await interaction.editReply({
                             content: '❌ No hay prefijos configurados en este servidor.',
                             ephemeral: true
                         });
@@ -146,7 +166,7 @@ module.exports = {
                     let failed = 0;
 
                     // Aplicar todos los prefijos configurados
-                    for (const [roleId, prefix] of Object.entries(guildConfig)) {
+                    for (const [roleId, prefix] of Object.entries(guildPrefixes)) {
                         const role = await interaction.guild.roles.fetch(roleId);
                         if (!role) continue;
 
@@ -171,14 +191,14 @@ module.exports = {
                         )
                         .setTimestamp();
 
-                    await interaction.reply({ embeds: [embed] });
+                    await interaction.editReply({ embeds: [embed] });
                     break;
                 }
 
                 case 'list': {
-                    const guildConfig = global.prefixConfig.get(interaction.guildId);
-                    if (!guildConfig || Object.keys(guildConfig).length === 0) {
-                        return await interaction.reply({
+                    const guildPrefixes = global.prefixConfig.get(interaction.guildId);
+                    if (!guildPrefixes || Object.keys(guildPrefixes).length === 0) {
+                        return await interaction.editReply({
                             content: '❌ No hay prefijos configurados en este servidor.',
                             ephemeral: true
                         });
@@ -190,7 +210,7 @@ module.exports = {
                         .setDescription('Prefijos configurados en este servidor:')
                         .setTimestamp();
 
-                    for (const [roleId, prefix] of Object.entries(guildConfig)) {
+                    for (const [roleId, prefix] of Object.entries(guildPrefixes)) {
                         const role = await interaction.guild.roles.fetch(roleId);
                         if (role) {
                             embed.addFields({
@@ -201,13 +221,13 @@ module.exports = {
                         }
                     }
 
-                    await interaction.reply({ embeds: [embed] });
+                    await interaction.editReply({ embeds: [embed] });
                     break;
                 }
             }
         } catch (error) {
             console.error('Error en comando prefix:', error);
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ Hubo un error al ejecutar el comando.',
                 ephemeral: true
             });

@@ -1,5 +1,5 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
-const fs = require('fs').promises;
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { loadConfig, saveConfig } = require('../utils/configManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -7,160 +7,105 @@ module.exports = {
         .setDescription('📥 Gestiona la configuración del servidor')
         .addSubcommand(subcommand =>
             subcommand
-                .setName('export')
-                .setDescription('Exporta la configuración actual del servidor'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('import')
-                .setDescription('Importa una configuración desde un archivo')
-                .addAttachmentOption(option =>
-                    option.setName('archivo')
-                        .setDescription('Archivo JSON con la configuración')
-                        .setRequired(true)))
+                .setName('save')
+                .setDescription('Guarda la configuración actual en el archivo'))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
         try {
-            const subcommand = interaction.options.getSubcommand();
+            await interaction.deferReply({ ephemeral: true });
 
-            switch (subcommand) {
-                case 'export': {
-                    // Recopilar toda la configuración del servidor
-                    const guildConfig = {
-                        guildId: interaction.guildId,
-                        guildName: interaction.guild.name,
-                        exportDate: new Date().toISOString(),
-                        prefix: {
-                            roles: global.prefixConfig?.get(interaction.guildId) || {}
-                        },
-                        suggestions: {
-                            channel: global.serverConfig?.get(interaction.guildId)?.suggestionsChannel
-                        },
-                        logs: {
-                            channel: global.logsChannels?.get(interaction.guildId)
-                        },
-                        autorole: {
-                            roleId: global.autoRoleConfig?.get(interaction.guildId)
-                        }
+            // Verificar si es el dueño del bot
+            const application = await interaction.client.application.fetch();
+            if (interaction.user.id !== application.owner.id) {
+                return await interaction.editReply({
+                    content: '```diff\n- ❌ Solo el dueño del bot puede usar este comando.\n```',
+                    ephemeral: true
+                });
+            }
+
+            // Cargar la configuración actual
+            const config = await loadConfig();
+
+            // Recopilar configuración de prefijos
+            config.prefix = {};
+            for (const [guildId, prefixes] of global.prefixConfig) {
+                config.prefix[guildId] = prefixes;
+            }
+
+            // Recopilar configuración de sugerencias
+            config.suggestions = {};
+            for (const [guildId, serverConfig] of global.serverConfig) {
+                if (serverConfig.suggestionsChannel) {
+                    config.suggestions[guildId] = {
+                        channel: serverConfig.suggestionsChannel
                     };
-
-                    // Convertir a JSON con formato legible
-                    const jsonString = JSON.stringify(guildConfig, null, 2);
-                    const buffer = Buffer.from(jsonString, 'utf-8');
-
-                    // Crear el archivo adjunto
-                    const attachment = new AttachmentBuilder(buffer, {
-                        name: `config_${interaction.guild.name}_${Date.now()}.json`
-                    });
-
-                    // Crear embed informativo
-                    const embed = new EmbedBuilder()
-                        .setTitle('📤 Configuración Exportada')
-                        .setColor('#00FF00')
-                        .setDescription('La configuración ha sido exportada exitosamente.')
-                        .addFields(
-                            { name: '🏷️ Prefijos', value: Object.keys(guildConfig.prefix.roles).length > 0 ? '✅ Incluido' : '❌ No configurado', inline: true },
-                            { name: '💭 Sugerencias', value: guildConfig.suggestions.channel ? '✅ Incluido' : '❌ No configurado', inline: true },
-                            { name: '📝 Logs', value: guildConfig.logs.channel ? '✅ Incluido' : '❌ No configurado', inline: true },
-                            { name: '🎭 AutoRole', value: guildConfig.autorole.roleId ? '✅ Incluido' : '❌ No configurado', inline: true }
-                        )
-                        .setTimestamp();
-
-                    await interaction.reply({
-                        embeds: [embed],
-                        files: [attachment],
-                        ephemeral: true
-                    });
-                    break;
-                }
-
-                case 'import': {
-                    const file = interaction.options.getAttachment('archivo');
-
-                    // Verificar el tipo de archivo
-                    if (!file.name.endsWith('.json')) {
-                        return await interaction.reply({
-                            content: '❌ El archivo debe ser de tipo JSON.',
-                            ephemeral: true
-                        });
-                    }
-
-                    try {
-                        // Descargar y parsear el archivo
-                        const response = await fetch(file.url);
-                        const configData = await response.json();
-
-                        // Verificar que el archivo sea válido
-                        if (!configData.guildId || !configData.guildName) {
-                            return await interaction.reply({
-                                content: '❌ El archivo de configuración no es válido.',
-                                ephemeral: true
-                            });
-                        }
-
-                        // Aplicar configuraciones
-                        let applied = [];
-
-                        // Importar prefijos
-                        if (configData.prefix?.roles) {
-                            if (!global.prefixConfig) global.prefixConfig = new Map();
-                            global.prefixConfig.set(interaction.guildId, configData.prefix.roles);
-                            applied.push('🏷️ Prefijos');
-                        }
-
-                        // Importar configuración de sugerencias
-                        if (configData.suggestions?.channel) {
-                            if (!global.serverConfig) global.serverConfig = new Map();
-                            global.serverConfig.set(interaction.guildId, {
-                                ...global.serverConfig.get(interaction.guildId),
-                                suggestionsChannel: configData.suggestions.channel
-                            });
-                            applied.push('💭 Sugerencias');
-                        }
-
-                        // Importar configuración de logs
-                        if (configData.logs?.channel) {
-                            if (!global.logsChannels) global.logsChannels = new Map();
-                            global.logsChannels.set(interaction.guildId, configData.logs.channel);
-                            applied.push('📝 Logs');
-                        }
-
-                        // Importar configuración de autorole
-                        if (configData.autorole?.roleId) {
-                            if (!global.autoRoleConfig) global.autoRoleConfig = new Map();
-                            global.autoRoleConfig.set(interaction.guildId, configData.autorole.roleId);
-                            applied.push('🎭 AutoRole');
-                        }
-
-                        const embed = new EmbedBuilder()
-                            .setTitle('📥 Configuración Importada')
-                            .setColor('#00FF00')
-                            .setDescription('La configuración ha sido importada exitosamente.')
-                            .addFields({
-                                name: '✅ Módulos Importados',
-                                value: applied.length > 0 ? applied.join('\n') : 'Ninguno'
-                            })
-                            .setTimestamp();
-
-                        await interaction.reply({
-                            embeds: [embed],
-                            ephemeral: true
-                        });
-
-                    } catch (error) {
-                        console.error('Error al importar configuración:', error);
-                        await interaction.reply({
-                            content: '❌ Error al procesar el archivo de configuración.',
-                            ephemeral: true
-                        });
-                    }
-                    break;
                 }
             }
+
+            // Recopilar configuración de logs
+            config.logs = {};
+            for (const [guildId, channelId] of global.logsChannels) {
+                config.logs[guildId] = channelId;
+            }
+
+            // Recopilar configuración de autorole
+            config.autorole = {};
+            for (const [guildId, roleId] of global.autoRoleConfig) {
+                config.autorole[guildId] = roleId;
+            }
+
+            // Mantener la configuración de tickets si existe
+            if (!config.tickets) {
+                config.tickets = {};
+            }
+            if (global.ticketConfig) {
+                config.tickets = global.ticketConfig;
+            }
+
+            // Guardar la configuración en el archivo
+            await saveConfig(config);
+
+            // Crear embed con el resumen
+            const embed = new EmbedBuilder()
+                .setTitle('💾 Configuración Guardada')
+                .setColor('#00FF00')
+                .setDescription('La configuración ha sido guardada exitosamente en el archivo.')
+                .addFields(
+                    { 
+                        name: '🏷️ Prefijos', 
+                        value: `${Object.keys(config.prefix).length} servidores`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '💭 Sugerencias', 
+                        value: `${Object.keys(config.suggestions).length} servidores`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '📝 Logs', 
+                        value: `${Object.keys(config.logs).length} servidores`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '🎭 AutoRole', 
+                        value: `${Object.keys(config.autorole).length} servidores`, 
+                        inline: true 
+                    },
+                    {
+                        name: '🎫 Tickets',
+                        value: `${Object.keys(config.tickets || {}).length} servidores`,
+                        inline: true
+                    }
+                )
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+
         } catch (error) {
             console.error('Error en comando config:', error);
-            await interaction.reply({
-                content: '❌ Hubo un error al ejecutar el comando.',
+            await interaction.editReply({
+                content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
                 ephemeral: true
             });
         }

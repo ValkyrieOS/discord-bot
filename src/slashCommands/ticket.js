@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { createTranscript } = require('discord-html-transcripts');
+const { loadConfig, saveConfig } = require('../utils/configManager');
 
 // Mapa global para almacenar tickets activos
 if (!global.activeTickets) {
@@ -102,21 +103,26 @@ module.exports = {
                         components: [row]
                     });
 
-                    // Inicializar la configuración global si no existe
-                    if (!global.ticketConfig) {
-                        global.ticketConfig = {};
+                    // Cargar la configuración actual
+                    const config = await loadConfig();
+                    
+                    // Inicializar la sección de tickets si no existe
+                    if (!config.tickets) {
+                        config.tickets = {};
                     }
 
-                    // Guardar configuración
-                    global.ticketConfig = {
+                    // Guardar la nueva configuración de tickets para este servidor
+                    config.tickets[interaction.guild.id] = {
                         messageId: msg.id,
                         channelId: channel.id,
-                        staffRoleId: staffRole.id,
-                        guildId: interaction.guild.id
+                        staffRoleId: staffRole.id
                     };
 
-                    // Guardar configuración
-                    saveConfigurations();
+                    // Actualizar la variable global
+                    global.ticketConfig = config.tickets;
+
+                    // Guardar la configuración
+                    await saveConfig(config);
 
                     await interaction.reply({
                         content: '```diff\n+ ✅ Sistema de tickets configurado correctamente\n```',

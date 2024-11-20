@@ -18,6 +18,8 @@ const fs = require('fs');
 const fsPromises = fs.promises;
 const config = require('../config.json');
 const path = require('path');
+const { loadConfig, saveConfig } = require('./utils/configManager');
+const { loadVips } = require('./utils/vipManager');
 
 // Inicializar variables globales
 if (!global.ticketConfig) global.ticketConfig = {};
@@ -27,6 +29,7 @@ if (!global.suggestions) global.suggestions = new Map();
 if (!global.antiraidConfig) global.antiraidConfig = new Map();
 if (!global.logsChannels) global.logsChannels = new Map();
 if (!global.prefixConfig) global.prefixConfig = new Map();
+if (!global.autoRoleConfig) global.autoRoleConfig = new Map();
 
 // Inicializar cliente
 const client = new Client({
@@ -41,9 +44,18 @@ const client = new Client({
         GatewayIntentBits.GuildPresences,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.DirectMessageReactions,
-        GatewayIntentBits.GuildInvites
+        GatewayIntentBits.GuildInvites,
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildMessageTyping
     ],
-    partials: [Partials.Channel, Partials.Message, Partials.Reaction]
+    partials: [
+        Partials.Message,
+        Partials.Channel,
+        Partials.Reaction,
+        Partials.GuildMember,
+        Partials.User,
+        Partials.ThreadMember
+    ]
 });
 
 // Colecciones para comandos y eventos
@@ -56,45 +68,45 @@ for (const file of commandFiles) {
     client.commands.set(command.data.name, command);
 }
 
-// Función para guardar configuraciones
-async function saveConfigurations() {
-    try {
-        const configPath = path.join(__dirname, './data/config.json');
-        const configDir = path.dirname(configPath);
-
-        await fsPromises.mkdir(configDir, { recursive: true });
-
-        const configToSave = {
-            ticketConfig: global.ticketConfig,
-            prefixConfig: Object.fromEntries(global.prefixConfig),
-            serverConfig: Object.fromEntries(global.serverConfig),
-            logsChannels: Object.fromEntries(global.logsChannels),
-            autoRoleConfig: Object.fromEntries(global.autoRoleConfig || new Map())
-        };
-
-        await fsPromises.writeFile(configPath, JSON.stringify(configToSave, null, 2));
-        console.log('Configuraciones guardadas exitosamente.');
-    } catch (error) {
-        console.error('Error al guardar configuraciones:', error);
-    }
-}
-
 // Cargar configuraciones al iniciar
 async function loadConfigurations() {
     try {
-        const configPath = path.join(__dirname, './data/config.json');
-        if (fs.existsSync(configPath)) {
-            const data = await fsPromises.readFile(configPath, 'utf-8');
-            const savedConfig = JSON.parse(data);
-            
-            global.ticketConfig = savedConfig.ticketConfig || {};
-            global.prefixConfig = new Map(Object.entries(savedConfig.prefixConfig || {}));
-            global.serverConfig = new Map(Object.entries(savedConfig.serverConfig || {}));
-            global.logsChannels = new Map(Object.entries(savedConfig.logsChannels || {}));
-            global.autoRoleConfig = new Map(Object.entries(savedConfig.autoRoleConfig || {}));
-            
-            console.log('Configuraciones cargadas exitosamente.');
+        const config = await loadConfig();
+        
+        // Cargar configuración de tickets
+        if (config.tickets) {
+            global.ticketConfig = config.tickets;
         }
+
+        // Cargar prefijos
+        if (config.prefix) {
+            global.prefixConfig = new Map(Object.entries(config.prefix));
+        }
+
+        // Cargar configuración de servidores y sugerencias
+        if (config.suggestions) {
+            global.serverConfig = new Map();
+            for (const [guildId, data] of Object.entries(config.suggestions)) {
+                global.serverConfig.set(guildId, {
+                    suggestionsChannel: data.channel
+                });
+            }
+        }
+
+        // Cargar logs
+        if (config.logs) {
+            global.logsChannels = new Map(Object.entries(config.logs));
+        }
+
+        // Cargar autorole
+        if (config.autorole) {
+            global.autoRoleConfig = new Map(Object.entries(config.autorole));
+        }
+
+        // Cargar usuarios VIP desde el archivo JSON
+        await loadVips();
+        
+        console.log('Configuraciones cargadas exitosamente.');
     } catch (error) {
         console.error('Error al cargar configuraciones:', error);
     }
@@ -109,24 +121,28 @@ client.on('ready', async () => {
 
 // Manejar comandos e interacciones
 client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+    if (!command) return;
+
     try {
-        if (interaction.isCommand()) {
-            const command = client.commands.get(interaction.commandName);
-            if (!command) return;
-            await command.execute(interaction);
-        } else if (interaction.isStringSelectMenu() && interaction.customId === 'help_menu') {
-            const command = client.commands.get('help');
-            if (!command) return;
-            await command.execute(interaction);
+        // Verificar permisos VIP
+        const { isVIP, isCommandFree } = require('./utils/permissions');
+        if (!isCommandFree(command.data.name) && !isVIP(interaction.user.id)) {
+            return await interaction.reply({
+                content: '```diff\n- ❌ Este comando solo está disponible para usuarios VIP.\n```',
+                ephemeral: true
+            });
         }
+
+        await command.execute(interaction);
     } catch (error) {
         console.error(error);
-        const errorMessage = '```diff\n- ❌ ¡Hubo un error al ejecutar este comando!\n```';
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: errorMessage, ephemeral: true });
-        } else {
-            await interaction.reply({ content: errorMessage, ephemeral: true });
-        }
+        await interaction.reply({
+            content: '```diff\n- ❌ Hubo un error al ejecutar este comando!\n```',
+            ephemeral: true
+        }).catch(console.error);
     }
 });
 
@@ -162,14 +178,169 @@ client.on('guildMemberAdd', async member => {
     }
 });
 
+// Eventos de logs
+client.on('channelCreate', async channel => {
+    if (!channel.guild) return;
+    
+    const logChannelId = global.logsChannels.get(channel.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = channel.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('📝 Canal Creado')
+            .setColor('#00ff00')
+            .addFields([
+                { name: 'Nombre', value: channel.name || 'N/A', inline: true },
+                { name: 'Tipo', value: channel.type.toString() || 'N/A', inline: true },
+                { name: 'ID', value: channel.id || 'N/A', inline: true }
+            ])
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de canal creado:', error);
+    }
+});
+
+client.on('channelDelete', async channel => {
+    if (!channel.guild) return;
+    
+    const logChannelId = global.logsChannels.get(channel.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = channel.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('🗑️ Canal Eliminado')
+            .setColor('#ff0000')
+            .addFields([
+                { name: 'Nombre', value: channel.name || 'N/A', inline: true },
+                { name: 'Tipo', value: channel.type.toString() || 'N/A', inline: true },
+                { name: 'ID', value: channel.id || 'N/A', inline: true }
+            ])
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de canal eliminado:', error);
+    }
+});
+
+client.on('messageDelete', async message => {
+    if (!message.guild || message.author?.bot) return;
+    
+    const logChannelId = global.logsChannels.get(message.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = message.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('🗑️ Mensaje Eliminado')
+            .setColor('#ff0000')
+            .addFields([
+                { name: 'Autor', value: `${message.author}` || 'Desconocido', inline: true },
+                { name: 'Canal', value: `${message.channel}` || 'Desconocido', inline: true },
+                { name: 'Contenido', value: message.content || 'Sin contenido' }
+            ])
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de mensaje eliminado:', error);
+    }
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+    if (!oldMessage.guild || oldMessage.author?.bot) return;
+    if (oldMessage.content === newMessage.content) return;
+    
+    const logChannelId = global.logsChannels.get(oldMessage.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = oldMessage.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('✏️ Mensaje Editado')
+            .setColor('#ffff00')
+            .addFields([
+                { name: 'Autor', value: `${oldMessage.author}` || 'Desconocido', inline: true },
+                { name: 'Canal', value: `${oldMessage.channel}` || 'Desconocido', inline: true },
+                { name: 'Antes', value: oldMessage.content || 'Sin contenido' },
+                { name: 'Después', value: newMessage.content || 'Sin contenido' }
+            ])
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de mensaje editado:', error);
+    }
+});
+
+client.on('guildMemberAdd', async member => {
+    const logChannelId = global.logsChannels.get(member.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = member.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('👋 Miembro Nuevo')
+            .setColor('#00ff00')
+            .addFields([
+                { name: 'Usuario', value: `${member.user}` || 'Desconocido', inline: true },
+                { name: 'ID', value: member.user.id || 'Desconocido', inline: true },
+                { name: 'Cuenta Creada', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true }
+            ])
+            .setThumbnail(member.user.displayAvatarURL())
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de miembro nuevo:', error);
+    }
+});
+
+client.on('guildMemberRemove', async member => {
+    const logChannelId = global.logsChannels.get(member.guild.id);
+    if (!logChannelId) return;
+    
+    const logChannel = member.guild.channels.cache.get(logChannelId);
+    if (!logChannel) return;
+
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('👋 Miembro Salió')
+            .setColor('#ff0000')
+            .addFields([
+                { name: 'Usuario', value: `${member.user}` || 'Desconocido', inline: true },
+                { name: 'ID', value: member.user.id || 'Desconocido', inline: true },
+                { name: 'Se unió', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true }
+            ])
+            .setThumbnail(member.user.displayAvatarURL())
+            .setTimestamp();
+
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error al enviar log de miembro salió:', error);
+    }
+});
+
 // Manejo de cierre del proceso
 process.on('SIGINT', async () => {
-    await saveConfigurations();
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-    await saveConfigurations();
     process.exit(0);
 });
 

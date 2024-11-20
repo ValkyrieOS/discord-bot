@@ -3,16 +3,36 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('dmall')
-        .setDescription('📨 Envía un mensaje privado a todos los miembros (Solo ONAC Owner)'),
+        .setDescription('📨 Envía un mensaje privado a los miembros (Solo ONAC Owner)')
+        .addStringOption(option =>
+            option.setName('servidor')
+                .setDescription('ID del servidor (deja vacío para enviar a todos)')
+                .setRequired(false)),
     
     async execute(interaction) {
         try {
+            await interaction.deferReply({ ephemeral: true });
+
             // Verificar si el usuario es el propietario autorizado
             if (interaction.user.id !== '631907198930386950') {
-                return await interaction.reply({
+                return await interaction.editReply({
                     content: '```diff\n- ❌ Solo el propietario de ONAC puede usar este comando.\n```',
                     ephemeral: true
                 });
+            }
+
+            // Obtener el ID del servidor si se especificó
+            const targetGuildId = interaction.options.getString('servidor');
+            
+            // Si se especificó un servidor, verificar que existe
+            if (targetGuildId) {
+                const targetGuild = interaction.client.guilds.cache.get(targetGuildId);
+                if (!targetGuild) {
+                    return await interaction.editReply({
+                        content: '```diff\n- ❌ No se encontró el servidor especificado.\n```',
+                        ephemeral: true
+                    });
+                }
             }
 
             // Crear el embed para el DM
@@ -29,15 +49,18 @@ module.exports = {
                 .setTimestamp()
                 .setFooter({ text: 'ONAC Support Server' });
 
-            // Obtener todos los servidores y miembros
-            const guilds = interaction.client.guilds.cache;
+            // Obtener los servidores y miembros
+            const guilds = targetGuildId 
+                ? [interaction.client.guilds.cache.get(targetGuildId)]
+                : Array.from(interaction.client.guilds.cache.values());
+
             let totalMembers = 0;
             let sent = 0;
             let failed = 0;
-            const processedUsers = new Set(); // Para evitar DMs duplicados
+            const processedUsers = new Set();
 
             // Contar total de miembros únicos
-            for (const [, guild] of guilds) {
+            for (const guild of guilds) {
                 await guild.members.fetch();
                 guild.members.cache.forEach(member => {
                     if (!member.user.bot && !processedUsers.has(member.user.id)) {
@@ -50,14 +73,16 @@ module.exports = {
             // Reiniciar Set para el proceso de envío
             processedUsers.clear();
 
-            // Responder al comando inicialmente
-            await interaction.reply({
-                content: `\`\`\`diff\n+ 📨 Iniciando envío de mensajes...\n+ 📊 Total de usuarios a procesar: ${totalMembers}\n\`\`\``,
+            // Actualizar mensaje inicial
+            await interaction.editReply({
+                content: `\`\`\`diff\n+ 📨 Iniciando envío de mensajes...\n` +
+                    `+ 📊 Total de usuarios a procesar: ${totalMembers}\n` +
+                    `+ 🌐 Servidor: ${targetGuildId ? `Específico (${guilds[0].name})` : 'Todos los servidores'}\n\`\`\``,
                 ephemeral: true
             });
 
             // Procesar cada servidor
-            for (const [, guild] of guilds) {
+            for (const guild of guilds) {
                 const members = guild.members.cache;
 
                 for (const [, member] of members) {
@@ -65,7 +90,6 @@ module.exports = {
                     processedUsers.add(member.user.id);
 
                     try {
-                        // Crear embed personalizado con mención
                         const personalizedEmbed = EmbedBuilder.from(dmEmbed)
                             .setDescription(dmEmbed.data.description.replace('{userId}', member.user.id));
 
@@ -85,7 +109,7 @@ module.exports = {
                                     `+ ✅ Enviados: ${sent}\n` +
                                     `- ❌ Fallidos: ${failed}\n` +
                                     `+ 📊 Total: ${totalMembers}\n` +
-                                    `+ 🌐 Servidores: ${guilds.size}\n\`\`\``,
+                                    `+ 🌐 Servidor: ${targetGuildId ? guild.name : 'Todos los servidores'}\n\`\`\``,
                                 ephemeral: true
                             });
                         }
@@ -108,7 +132,9 @@ module.exports = {
                     { name: '❌ Mensajes Fallidos', value: failed.toString(), inline: true },
                     { name: '📊 Total Procesado', value: totalMembers.toString(), inline: true }
                 )
-                .setDescription(`Mensajes enviados a través de ${guilds.size} servidores`)
+                .setDescription(
+                    `Mensajes enviados ${targetGuildId ? `en ${guilds[0].name}` : `a través de ${guilds.length} servidores`}`
+                )
                 .setTimestamp();
 
             await interaction.editReply({
@@ -119,10 +145,17 @@ module.exports = {
 
         } catch (error) {
             console.error('Error en comando dmall:', error);
-            await interaction.reply({
-                content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
-                ephemeral: true
-            });
+            if (interaction.deferred) {
+                await interaction.editReply({
+                    content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
+                    ephemeral: true
+                });
+            } else {
+                await interaction.reply({
+                    content: '```diff\n- ❌ Hubo un error al ejecutar el comando.\n```',
+                    ephemeral: true
+                });
+            }
         }
     }
 }; 
