@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -6,80 +6,68 @@ module.exports = {
         .setDescription('📊 Crea una encuesta')
         .addStringOption(option =>
             option.setName('pregunta')
-                .setDescription('La pregunta de la encuesta')
+                .setDescription('Pregunta de la encuesta')
                 .setRequired(true))
         .addStringOption(option =>
-            option.setName('opciones')
-                .setDescription('Opciones separadas por comas (máx. 10)')
-                .setRequired(false)),
+            option.setName('opcion1')
+                .setDescription('Primera opción')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('opcion2')
+                .setDescription('Segunda opción')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('opcion3')
+                .setDescription('Tercera opción (opcional)')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('opcion4')
+                .setDescription('Cuarta opción (opcional)')
+                .setRequired(false))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
     async execute(interaction) {
         try {
             const pregunta = interaction.options.getString('pregunta');
-            const opcionesStr = interaction.options.getString('opciones');
+            const opciones = [
+                interaction.options.getString('opcion1'),
+                interaction.options.getString('opcion2'),
+                interaction.options.getString('opcion3'),
+                interaction.options.getString('opcion4')
+            ].filter(Boolean); // Eliminar opciones nulas
 
-            let opciones;
-            let reacciones;
+            const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣'];
+            const opcionesFormateadas = opciones.map((opcion, index) => 
+                `${emojis[index]} ${opcion}`
+            );
 
-            if (opcionesStr) {
-                // Encuesta con opciones personalizadas
-                opciones = opcionesStr.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
-                
-                if (opciones.length > 10) {
-                    return await interaction.reply({
-                        content: '```diff\n- ❌ No puedes tener más de 10 opciones.\n```',
-                        ephemeral: true
-                    });
-                }
+            const embed = new EmbedBuilder()
+                .setTitle('📊 Nueva Encuesta')
+                .setColor('#FF9900')
+                .setDescription(`**${pregunta}**\n\n${opcionesFormateadas.join('\n')}`)
+                .addFields({
+                    name: '📝 Instrucciones',
+                    value: 'Reacciona con el emoji correspondiente para votar'
+                })
+                .setFooter({ 
+                    text: `Creada por ${interaction.user.tag}`,
+                    iconURL: interaction.user.displayAvatarURL()
+                })
+                .setTimestamp();
 
-                // Emojis numerados para las opciones
-                reacciones = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-                
-                const embed = new EmbedBuilder()
-                    .setColor('#FF9900')
-                    .setTitle('📊 Nueva Encuesta')
-                    .setDescription(pregunta)
-                    .addFields(
-                        opciones.map((opcion, index) => ({
-                            name: `Opción ${index + 1}`,
-                            value: `${reacciones[index]} ${opcion}`,
-                            inline: false
-                        }))
-                    )
-                    .setFooter({ 
-                        text: `Creada por ${interaction.user.tag}`,
-                        iconURL: interaction.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
+            const message = await interaction.reply({ 
+                embeds: [embed],
+                fetchReply: true
+            });
 
-                const mensaje = await interaction.reply({ embeds: [embed], fetchReply: true });
-                
-                // Añadir reacciones para votar
-                for (let i = 0; i < opciones.length; i++) {
-                    await mensaje.react(reacciones[i]);
-                }
-            } else {
-                // Encuesta simple Sí/No
-                const embed = new EmbedBuilder()
-                    .setColor('#FF9900')
-                    .setTitle('📊 Nueva Encuesta')
-                    .setDescription(pregunta)
-                    .setFooter({ 
-                        text: `Creada por ${interaction.user.tag}`,
-                        iconURL: interaction.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-
-                const mensaje = await interaction.reply({ embeds: [embed], fetchReply: true });
-                
-                // Reacciones para Sí/No
-                await mensaje.react('👍');
-                await mensaje.react('👎');
+            // Añadir reacciones iniciales
+            for (let i = 0; i < opciones.length; i++) {
+                await message.react(emojis[i]);
             }
 
         } catch (error) {
             console.error('Error en comando poll:', error);
             await interaction.reply({
-                content: '```diff\n- ❌ Error al crear la encuesta.\n```',
+                content: '```diff\n- ❌ Hubo un error al crear la encuesta.\n```',
                 ephemeral: true
             });
         }
