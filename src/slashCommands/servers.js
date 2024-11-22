@@ -8,12 +8,17 @@ module.exports = {
     async execute(interaction) {
         try {
             // Verificar si es el dueño del bot
-            const application = await interaction.client.application.fetch();
-            if (interaction.user.id !== application.owner.id) {
-                return await interaction.reply({
-                    content: '```diff\n- ❌ Solo el dueño del bot puede usar este comando.\n```',
-                    ephemeral: true
-                });
+            const { isCommandFree } = require('../utils/permissions');
+            
+            // Si el comando es gratuito, permitir a todos los usuarios
+            if (!isCommandFree('servers')) {
+                const application = await interaction.client.application.fetch();
+                if (interaction.user.id !== application.owner.id) {
+                    return await interaction.reply({
+                        content: '```diff\n- ❌ Solo el dueño del bot puede usar este comando.\n```',
+                        ephemeral: true
+                    });
+                }
             }
 
             await interaction.deferReply({ ephemeral: true });

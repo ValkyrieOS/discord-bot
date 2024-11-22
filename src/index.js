@@ -146,6 +146,48 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+// Manejar interacciones de componentes (menús, botones, etc)
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isStringSelectMenu()) return;
+    
+    if (interaction.customId === 'help_menu') {
+        try {
+            const helpCommand = client.commands.get('help');
+            const commands = await helpCommand.getCommands();
+            
+            const category = interaction.values[0];
+            const categoryCommands = commands[category];
+            const categoryNames = {
+                moderacion: 'Moderación',
+                social: 'Social',
+                nsfw: 'NSFW',
+                info: 'Información',
+                utilidad: 'Utilidad',
+                economia: 'Economía',
+                diversion: 'Diversión'
+            };
+
+            const categoryEmbed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle(`📚 Comandos de ${categoryNames[category]}`)
+                .setDescription(categoryCommands.map(cmd => `> \`/${cmd.name}\` - ${cmd.desc}`).join('\n'))
+                .setFooter({ 
+                    text: interaction.user.tag,
+                    iconURL: interaction.user.displayAvatarURL()
+                })
+                .setTimestamp();
+
+            await interaction.update({ embeds: [categoryEmbed] });
+        } catch (error) {
+            console.error('Error en menú de ayuda:', error);
+            await interaction.reply({
+                content: '```diff\n- ❌ Hubo un error al mostrar la categoría.\n```',
+                ephemeral: true
+            });
+        }
+    }
+});
+
 // Sistema Anti-raid
 client.on('guildMemberAdd', async member => {
     const config = global.antiraidConfig.get(member.guild.id);
