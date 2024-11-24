@@ -38,7 +38,18 @@ async function saveEconomy(economyData) {
     }
 }
 
+async function updatePokerBalance(guildId, userId, amount) {
+    const economyData = await loadEconomy();
+    if (!economyData[guildId]) economyData[guildId] = {};
+    if (!economyData[guildId][userId]) economyData[guildId][userId] = { balance: 1000 };
+    
+    economyData[guildId][userId].balance += amount;
+    await saveEconomy(economyData);
+    return economyData[guildId][userId].balance;
+}
+
 module.exports = {
     loadEconomy,
-    saveEconomy
+    saveEconomy,
+    updatePokerBalance
 }; 
